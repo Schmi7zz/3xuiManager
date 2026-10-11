@@ -160,7 +160,7 @@ class App:
                 except Exception as exc:
                     sys.stderr.write("client panel error: {}\n".format(exc))
                     if not getattr(self, "_sent", False):
-                        app._send(self, 500, {"error": "The client panel failed"})
+                        app._send(self, 500, {"error": str(exc) or "The client panel failed"})
 
             def do_GET(self):
                 self._go()
@@ -665,6 +665,10 @@ class App:
             return
         except (ValueError, LookupError, PanelError) as exc:
             self._send(handler, 400, {"error": str(exc)})
+            return
+        except Exception as exc:
+            sys.stderr.write("client api {} failed: {}\n".format(action, exc))
+            self._send(handler, 500, {"error": str(exc)})
             return
         self._send(handler, 200, {"ok": True, "data": result})
 

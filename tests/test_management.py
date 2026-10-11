@@ -112,7 +112,7 @@ class FakePanel(BaseHTTPRequestHandler):
             if data.get("username") == "admin" and data.get("password") == "admin":
                 return self._json(200, {"success": True}, "3x-ui=adminsession; Path=/; HttpOnly")
             return self._json(401, {"success": False, "msg": "wrong"})
-        if "/setting" in path:
+        if "/setting/update" in path:
             FakePanel.hits["setting"] += 1
             return self._json(200, {"success": True, "obj": {"token": "should-not-leak"}})
         if path.endswith("/addClient"):
@@ -367,6 +367,19 @@ class ProxyTests(unittest.TestCase):
         self.assertTrue(payload.get("ok"), payload)
         self.assertEqual([row["port"] for row in payload["data"]], [1337])
         self.assertNotIn("Other", json.dumps(payload))
+        conn.close()
+        conn = http.client.HTTPConnection(parts.hostname, parts.port, timeout=10)
+        conn.request(
+            "POST",
+            "/secret/__xmgmt/api/client/links",
+            json.dumps({"inbound_id": 25, "email": "alice"}).encode("utf-8"),
+            {"Cookie": cookie, "Content-Type": "application/json", "X-XS": "1"},
+        )
+        linked = conn.getresponse()
+        link_body = linked.read().decode("utf-8")
+        self.assertEqual(linked.status, 200, link_body)
+        link_payload = json.loads(link_body)
+        self.assertTrue(link_payload["data"]["links"][0].startswith("vless://"), link_payload)
 
     def test_dashboard_html_contains_management_hook(self):
         opener = self._opener()

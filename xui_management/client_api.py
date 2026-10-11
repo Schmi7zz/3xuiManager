@@ -32,11 +32,15 @@ def _as_dict(value):
     return parsed if isinstance(parsed, dict) else {}
 
 
+_DEFAULTS = {"t": 0, "v": {}}
+
+
 def panel_defaults():
     """subURI / remarkModel from 3x-ui settings, cached for 60s."""
     if time.time() - _DEFAULTS["t"] > 60:
         try:
-            _DEFAULTS["v"] = XUI_API.call_path("POST", "/panel/setting/defaultSettings", {}) or {}
+            value = XUI_API.call_path("POST", "/panel/setting/defaultSettings", {}) or {}
+            _DEFAULTS["v"] = value if isinstance(value, dict) else {}
         except Exception as e:
             sys.stderr.write(f"could not read panel settings: {e}\n")
         _DEFAULTS["t"] = time.time()
