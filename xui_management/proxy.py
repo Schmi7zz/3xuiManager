@@ -22,6 +22,7 @@ from xui_management.auth import (
 )
 from xui_management.config import normalize_user
 from xui_management.panel import PanelError
+from xui_management import client_api
 from xui_management.scope import (
     assert_ids_allowed,
     client_count,
@@ -66,6 +67,8 @@ STATIC_FILES = {
     "/__xmgmt/ui": ("manage.html", "text/html"),
     "/__xmgmt/manage.js": ("manage.js", "application/javascript"),
     "/__xmgmt/manage.css": ("manage.css", "text/css"),
+    "/__xmgmt/client": ("client.html", "text/html"),
+    "/__xmgmt/qrcode.min.js": ("qrcode.min.js", "application/javascript"),
 }
 
 
@@ -147,6 +150,9 @@ class App:
         parsed = urllib.parse.urlsplit(handler.path)
         base = self.store.data["public_base_path"]
         rel = strip_base(parsed.path, base)
+        if handler.command == "GET" and rel in ("/__xmgmt/ui", "/__xmgmt/manage.js") and self._subuser(handler):
+            self._redirect(handler, base + "__xmgmt/client")
+            return
         if handler.command == "GET" and rel in STATIC_FILES:
             self._static(handler, rel)
             return
@@ -155,6 +161,9 @@ class App:
             self._send(handler, 413, {"success": False, "msg": "Request is too large"})
             return
         body = handler.rfile.read(length) if length else b""
+        if rel.startswith("/__xmgmt/api/client/"):
+            self._client_api(handler, rel, body)
+            return
         if rel.startswith("/__xmgmt/api/"):
             self._api(handler, rel, body)
             return
@@ -169,8 +178,14 @@ class App:
             self._logout(handler, parsed, body)
             return
         user = self._subuser(handler)
-        if user:
-            self._scoped(handler, parsed, body, user)
+        if user and not rel.startswith("/__xmgmt/"):
+            if handler.command == "GET":
+                self._redirect(handler, base + "__xmgmt/client")
+                return
+            self._send(handler, 403, {"success": False, "msg": "Open your client panel"})
+            return
+        if user and rel in ("/__xmgmt/ui", "/__xmgmt/manage.js"):
+            self._redirect(handler, base + "__xmgmt/client")
             return
         self._forward(handler, parsed, body, scoped=False)
 
@@ -426,7 +441,7 @@ class App:
                 handler,
                 200,
                 {"success": True},
-                extra=[self._session_cookie(token)],
+                extra=[self._session_cookie(token), self._role_cookie()],
             )
             return
         parsed = urllib.parse.urlsplit(handler.path)
@@ -434,7 +449,10 @@ class App:
 
     def _logout(self, handler, parsed, body):
         if self._subuser(handler):
-            self._send(handler, 200, {"success": True}, extra=[self._session_cookie("", clear=True)])
+            self._send(handler, 200, {"success": True}, extra=[
+                self._session_cookie("", clear=True),
+                self._role_cookie(clear=True),
+            ])
             return
         self._forward(handler, parsed, body, scoped=False, extra_cookie=self._session_cookie("", clear=True))
 
@@ -457,6 +475,77 @@ class App:
             "Set-Cookie",
             "xmgmt={}; Path={}; HttpOnly; SameSite=Lax; Max-Age={}{}".format(token, base, age, secure),
         )
+
+    def _role_cookie(self, clear=False):
+        base = self.store.data["public_base_path"]
+        secure = "; Secure" if self.store.data.get("tls_cert") and self.store.data.get("tls_key") else ""
+        age = "0" if clear else str(12 * 3600)
+        value = "" if clear else "user"
+        return (
+            "Set-Cookie",
+            "xmgmt_role={}; Path={}; SameSite=Lax; Max-Age={}{}".format(value, base, age, secure),
+        )
+
+    def _redirect(self, handler, location):
+        handler._sent = True
+        handler.send_response(302)
+        handler.send_header("Location", location)
+        handler.send_header("Content-Length", "0")
+        handler.end_headers()
+
+    def _client_api(self, handler, rel, body):
+        if handler.headers.get("X-XS") != "1":
+            self._send(handler, 403, {"error": "forbidden"})
+            return
+        action = rel[len("/__xmgmt/api/client/"):].strip("/")
+        try:
+            data = json.loads(body.decode("utf-8") or "{}")
+        except ValueError:
+            self._send(handler, 400, {"error": "bad request"})
+            return
+        if action == "login":
+            self._client_login(handler, data)
+            return
+        if action == "logout":
+            self._send(handler, 200, {"ok": True}, extra=[
+                self._session_cookie("", clear=True),
+                self._role_cookie(clear=True),
+            ])
+            return
+        user = self._subuser(handler)
+        if not user:
+            self._send(handler, 401, {"error": "Not logged in"})
+            return
+        host = (handler.headers.get("X-Forwarded-Host") or handler.headers.get("Host") or "").split(",")[0].strip()
+        host = host.split(":")[0] or "127.0.0.1"
+        try:
+            result = client_api.run(self.panel, self.store, user["username"], action, data, host)
+        except PermissionError as exc:
+            self._send(handler, 403, {"error": str(exc)})
+            return
+        except (ValueError, LookupError, PanelError) as exc:
+            self._send(handler, 400, {"error": str(exc)})
+            return
+        self._send(handler, 200, {"ok": True, "data": result})
+
+    def _client_login(self, handler, data):
+        ip = client_ip(handler, set(self.store.data.get("trusted_proxies") or []))
+        if login_blocked(ip):
+            self._send(handler, 429, {"error": "Too many attempts, wait 15 minutes"})
+            return
+        username = str(data.get("username") or "")
+        password = str(data.get("password") or "")
+        user = self.store.users_by_name().get(username)
+        if not user or not check_password(password, user["password_hash"]):
+            note_fail(ip)
+            self._send(handler, 401, {"error": "Wrong username or password"})
+            return
+        clear_fails(ip)
+        token = make_token(username, self.store.data["secret_key"])
+        self._send(handler, 200, {"ok": True}, extra=[
+            self._session_cookie(token),
+            self._role_cookie(),
+        ])
 
     def _scoped(self, handler, parsed, body, user):
         action, perm = decide(handler.command, parsed.path)

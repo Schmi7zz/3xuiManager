@@ -3,6 +3,10 @@
   if (!script) return;
   var mgmtBase = new URL(script.src, location.href).pathname.replace(/inject\.js$/, "");
   var panelBase = mgmtBase.replace(/__xmgmt\/$/, "");
+  if (/(?:^|; )xmgmt_role=user(?:;|$)/.test(document.cookie) && location.pathname.indexOf("__xmgmt/client") === -1) {
+    location.replace(mgmtBase + "client");
+    return;
+  }
   var role = "";
   var frame = null;
   var applying = false;

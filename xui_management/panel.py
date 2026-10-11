@@ -216,6 +216,17 @@ class PanelClient:
             raise PanelError(msg.get("msg") or "3x-ui returned an error")
         return msg.get("obj")
 
+    def call_first(self, method, paths, form=None):
+        last = None
+        for path in paths:
+            try:
+                return self._api(method, path, form)
+            except PanelError as exc:
+                last = exc
+        if last:
+            raise last
+        return None
+
     def inbounds(self, fresh=False):
         with self.lock:
             if not fresh and self._inbounds and time.time() - self._inbounds_at < 3:

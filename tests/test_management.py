@@ -306,17 +306,15 @@ class ProxyTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(FakePanel.hits["login"], before_login)
-        status, body, _headers = self._open(opener, "GET", "/secret/panel/api/inbounds/list")
+        status, body, _headers = self._open(
+            opener, "POST", "/secret/__xmgmt/api/client/inbounds",
+            "{}",
+            {"Content-Type": "application/json", "X-XS": "1"},
+        )
         self.assertEqual(status, 200, body)
-        text = body.decode("utf-8")
-        self.assertIn("Devilish", text)
-        self.assertNotIn("Other", text)
-        self.assertNotIn("SECRET-KEY", text)
-        self.assertIn("pub", text)
-        status, body, _headers = self._open(opener, "GET", "/secret/panel/api/server/status")
-        status_body = json.loads(body.decode("utf-8"))
-        self.assertEqual(status_body["obj"]["cpu"], 12.5)
-        self.assertNotIn("config", status_body["obj"])
+        payload = json.loads(body.decode("utf-8"))
+        self.assertEqual([row["remark"] for row in payload["data"]], ["Devilish"])
+        self.assertNotIn("SECRET-KEY", body.decode("utf-8"))
         status, _body, _headers = self._open(
             opener, "POST", "/secret/panel/api/setting/update",
             "{}",
@@ -331,13 +329,44 @@ class ProxyTests(unittest.TestCase):
         )
         self.assertEqual(status, 403)
         self.assertEqual(FakePanel.hits.get("add8", 0), 0)
-        status, body, _headers = self._open(
-            opener, "POST", "/secret/panel/api/inbounds/addClient",
-            "id=25&settings={}",
-            {"Content-Type": "application/x-www-form-urlencoded"},
+
+    def test_restricted_user_is_sent_to_the_original_panel(self):
+        import http.client
+        from urllib.parse import urlsplit
+
+        opener = self._opener()
+        self._open(
+            opener, "POST", "/secret/login",
+            json.dumps({"username": "devilish", "password": "user-pass-1"}),
+            {"Content-Type": "application/json"},
         )
-        self.assertEqual(status, 200, body)
-        self.assertEqual(FakePanel.hits.get("add25", 0), 1)
+        cookie = ""
+        for handler in opener.handlers:
+            jar = getattr(handler, "cookiejar", None)
+            if jar:
+                req = urllib.request.Request(self.proxy + "/secret/panel/inbounds")
+                jar.add_cookie_header(req)
+                cookie = req.get_header("Cookie") or ""
+        parts = urlsplit(self.proxy)
+        conn = http.client.HTTPConnection(parts.hostname, parts.port, timeout=10)
+        conn.request("GET", "/secret/panel/inbounds", headers={"Cookie": cookie})
+        response = conn.getresponse()
+        location = response.getheader("Location") or ""
+        response.read()
+        self.assertEqual(response.status, 302)
+        self.assertIn("/__xmgmt/client", location)
+        conn.request(
+            "POST",
+            "/secret/__xmgmt/api/client/inbounds",
+            b"{}",
+            {"Cookie": cookie, "Content-Type": "application/json", "X-XS": "1"},
+        )
+        listed = conn.getresponse()
+        payload = json.loads(listed.read().decode("utf-8"))
+        self.assertEqual(listed.status, 200, payload)
+        self.assertTrue(payload.get("ok"), payload)
+        self.assertEqual([row["port"] for row in payload["data"]], [1337])
+        self.assertNotIn("Other", json.dumps(payload))
 
     def test_dashboard_html_contains_management_hook(self):
         opener = self._opener()
