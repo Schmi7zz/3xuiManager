@@ -1,0 +1,15 @@
+{
+  "panel_url": "http://127.0.0.1:20530/YOUR_WEB_BASE_PATH",
+  "panel_username": "admin",
+  "panel_password": "change-me",
+  "panel_2fa_code": "",
+  "verify_tls": false,
+  "listen_host": "0.0.0.0",
+  "listen_port": 2053,
+  "public_base_path": "/YOUR_WEB_BASE_PATH/",
+  "tls_cert": "",
+  "tls_key": "",
+  "trusted_proxies": [],
+  "secret_key": "",
+  "users": []
+}

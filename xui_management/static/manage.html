@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Management</title>
+  <link rel="stylesheet" href="manage.css">
+</head>
+<body>
+  <div class="app">
+    <div class="head">
+      <div>
+        <h1>Management</h1>
+        <p>Users sign in on this same panel and only see the inbounds you give them.</p>
+      </div>
+    </div>
+    <div id="warn" class="warn" hidden>
+      <p id="warn-text"></p>
+      <div class="grid">
+        <input id="panel-user" autocomplete="username" placeholder="3x-ui admin username">
+        <input id="panel-pass" type="password" autocomplete="current-password" placeholder="3x-ui admin password">
+      </div>
+      <button type="button" class="btn" id="panel-save">Save panel login</button>
+    </div>
+    <div class="layout">
+      <div class="card users" id="users"><div class="empty">Loading…</div></div>
+      <form class="card editor" id="editor"></form>
+    </div>
+  </div>
+  <div id="toast" class="toast" hidden></div>
+  <script src="manage.js"></script>
+</body>
+</html>
