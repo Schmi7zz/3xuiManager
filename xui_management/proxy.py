@@ -96,10 +96,111 @@ def cookie_value(header, name):
     return ""
 
 
+class ClientListener(object):
+    def __init__(self, app):
+        self.app = app
+        self.httpd = None
+        self.port = 0
+        self.lock = threading.Lock()
+
+    def apply(self, port, host, cfg):
+        port = int(port or 0)
+        with self.lock:
+            if self.httpd and self.port == port:
+                return
+            self.close()
+            if not port:
+                return
+            httpd = ThreadingHTTPServer((host, port), self.app.client_handler())
+            httpd.daemon_threads = True
+            cert = cfg.get("tls_cert") or ""
+            key = cfg.get("tls_key") or ""
+            if cert and key:
+                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ctx.load_cert_chain(cert, key)
+                httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+            thread = threading.Thread(target=httpd.serve_forever, name="xui-client-panel", daemon=True)
+            thread.start()
+            self.httpd = httpd
+            self.port = port
+
+    def close(self):
+        if not self.httpd:
+            return
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.httpd = None
+        self.port = 0
+
+
 class App:
     def __init__(self, store, panel):
         self.store = store
         self.panel = panel
+        self.client_listener = ClientListener(self)
+
+    def open_client_port(self):
+        host = self.store.data.get("listen_host") or "0.0.0.0"
+        port = int(self.store.data.get("client_port") or 0)
+        self.client_listener.apply(port, host, self.store.data)
+
+    def client_handler(self):
+        app = self
+
+        class Handler(BaseHTTPRequestHandler):
+            server_version = "xui-management"
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, fmt, *args):
+                sys.stderr.write("client %s - %s\n" % (self.client_address[0], fmt % args))
+
+            def _go(self):
+                try:
+                    app._client_site(self)
+                except Exception as exc:
+                    sys.stderr.write("client panel error: {}\n".format(exc))
+                    if not getattr(self, "_sent", False):
+                        app._send(self, 500, {"error": "The client panel failed"})
+
+            def do_GET(self):
+                self._go()
+
+            def do_POST(self):
+                self._go()
+
+        return Handler
+
+    def _client_site(self, handler):
+        path = urllib.parse.urlsplit(handler.path).path
+        length = int(handler.headers.get("Content-Length") or 0)
+        if length > MAX_BODY:
+            self._send(handler, 413, {"error": "Request is too large"})
+            return
+        body = handler.rfile.read(length) if length else b""
+        if path in ("/", "/index.html"):
+            self._static(handler, "/__xmgmt/client")
+            return
+        if path in ("/qrcode.min.js", "/qr.js"):
+            self._static(handler, "/__xmgmt/qrcode.min.js")
+            return
+        if path.startswith("/api/client/"):
+            self._client_api(handler, "/__xmgmt" + path, body)
+            return
+        if path.startswith("/api/"):
+            self._client_api(handler, "/__xmgmt/api/client/" + path[len("/api/"):], body)
+            return
+        self._redirect(handler, "/")
+
+    def _client_home(self, handler):
+        port = int(self.store.data.get("client_port") or 0)
+        main = int(self.store.data.get("listen_port") or 0)
+        base = self.store.data["public_base_path"]
+        if not port or port == main:
+            return base + "__xmgmt/client"
+        host = (handler.headers.get("X-Forwarded-Host") or handler.headers.get("Host") or "127.0.0.1")
+        host = host.split(",")[0].strip().split(":")[0] or "127.0.0.1"
+        scheme = "https" if self.store.data.get("tls_cert") and self.store.data.get("tls_key") else "http"
+        return "{}://{}:{}/".format(scheme, host, port)
 
     def handler(self):
         app = self
@@ -151,7 +252,7 @@ class App:
         base = self.store.data["public_base_path"]
         rel = strip_base(parsed.path, base)
         if handler.command == "GET" and rel in ("/__xmgmt/ui", "/__xmgmt/manage.js") and self._subuser(handler):
-            self._redirect(handler, base + "__xmgmt/client")
+            self._redirect(handler, self._client_home(handler))
             return
         if handler.command == "GET" and rel in STATIC_FILES:
             self._static(handler, rel)
@@ -180,12 +281,12 @@ class App:
         user = self._subuser(handler)
         if user and not rel.startswith("/__xmgmt/"):
             if handler.command == "GET":
-                self._redirect(handler, base + "__xmgmt/client")
+                self._redirect(handler, self._client_home(handler))
                 return
             self._send(handler, 403, {"success": False, "msg": "Open your client panel"})
             return
         if user and rel in ("/__xmgmt/ui", "/__xmgmt/manage.js"):
-            self._redirect(handler, base + "__xmgmt/client")
+            self._redirect(handler, self._client_home(handler))
             return
         self._forward(handler, parsed, body, scoped=False)
 
@@ -250,9 +351,14 @@ class App:
                     "obj": rows,
                     "warning": warning,
                     "panel_username": self.store.data.get("panel_username") or "",
+                    "client_port": int(self.store.data.get("client_port") or 0),
                 })
                 return
             payload = json.loads(body.decode("utf-8") or "{}")
+            if method == "POST" and rel == "/__xmgmt/api/client-port":
+                port = self._save_client_port(payload)
+                self._send(handler, 200, {"success": True, "obj": {"port": port}})
+                return
             if method == "POST" and rel == "/__xmgmt/api/panel-login":
                 self._save_panel_login(payload)
                 self._send(handler, 200, {"success": True})
@@ -336,6 +442,24 @@ class App:
         self._login_fail_until = 0
         self._login_fail_msg = ""
         self.store.save()
+
+    def _save_client_port(self, payload):
+        try:
+            port = int(payload.get("port") or 0)
+        except (TypeError, ValueError):
+            raise ValueError("Port must be a number")
+        if port < 0 or port > 65535:
+            raise ValueError("Port must be between 1 and 65535")
+        main = int(self.store.data.get("listen_port") or 0)
+        if port and port == main:
+            raise ValueError("That is the main panel port. Pick a different one, for example 8788.")
+        self.store.data["client_port"] = port
+        self.store.save()
+        try:
+            self.open_client_port()
+        except OSError as exc:
+            raise ValueError("Could not open port {}: {}".format(port, exc))
+        return port
 
     def _save_user(self, payload):
         username = str(payload.get("username") or "").strip()
@@ -441,7 +565,7 @@ class App:
                 handler,
                 200,
                 {"success": True},
-                extra=[self._session_cookie(token), self._role_cookie()],
+                extra=[self._session_cookie(token), self._role_cookie(), self._port_cookie()],
             )
             return
         parsed = urllib.parse.urlsplit(handler.path)
@@ -452,6 +576,7 @@ class App:
             self._send(handler, 200, {"success": True}, extra=[
                 self._session_cookie("", clear=True),
                 self._role_cookie(clear=True),
+                self._port_cookie(clear=True),
             ])
             return
         self._forward(handler, parsed, body, scoped=False, extra_cookie=self._session_cookie("", clear=True))
@@ -486,6 +611,20 @@ class App:
             "xmgmt_role={}; Path={}; SameSite=Lax; Max-Age={}{}".format(value, base, age, secure),
         )
 
+    def _port_cookie(self, clear=False):
+        base = self.store.data["public_base_path"]
+        secure = "; Secure" if self.store.data.get("tls_cert") and self.store.data.get("tls_key") else ""
+        port = int(self.store.data.get("client_port") or 0)
+        if clear or not port:
+            return (
+                "Set-Cookie",
+                "xmgmt_port=; Path={}; SameSite=Lax; Max-Age=0{}".format(base, secure),
+            )
+        return (
+            "Set-Cookie",
+            "xmgmt_port={}; Path={}; SameSite=Lax; Max-Age={}{}".format(port, base, 12 * 3600, secure),
+        )
+
     def _redirect(self, handler, location):
         handler._sent = True
         handler.send_response(302)
@@ -510,6 +649,7 @@ class App:
             self._send(handler, 200, {"ok": True}, extra=[
                 self._session_cookie("", clear=True),
                 self._role_cookie(clear=True),
+                self._port_cookie(clear=True),
             ])
             return
         user = self._subuser(handler)
@@ -545,6 +685,7 @@ class App:
         self._send(handler, 200, {"ok": True}, extra=[
             self._session_cookie(token),
             self._role_cookie(),
+            self._port_cookie(),
         ])
 
     def _scoped(self, handler, parsed, body, user):

@@ -18,6 +18,10 @@ def make_server(store, panel):
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(cert, key)
         httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+    try:
+        app.open_client_port()
+    except OSError as exc:
+        print("user panel port failed: {}".format(exc))
     return httpd
 
 

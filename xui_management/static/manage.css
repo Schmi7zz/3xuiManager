@@ -31,6 +31,9 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 button, input { font: inherit; color: inherit; }
 button { cursor: pointer; }
 .app { max-width: 1080px; margin: 0 auto; padding: 22px 18px 48px; min-height: 100%; }
+.portbox { padding: 16px; margin-bottom: 16px; }
+.portbox h2 { margin: 0 0 6px; font-size: 16px; }
+.portbox input { width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
 .warn { background: rgba(240, 176, 65, .12); border: 1px solid rgba(240, 176, 65, .45); color: var(--text); border-radius: 14px; padding: 14px 16px; margin-bottom: 16px; }
 .warn p { margin: 0 0 12px; }
 .warn .grid { margin-bottom: 12px; }

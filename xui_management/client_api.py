@@ -20,6 +20,18 @@ XUI_API = None
 CFG = {}
 _LOCK = threading.Lock()
 
+def _as_dict(value):
+    if isinstance(value, dict):
+        return value
+    if not value or isinstance(value, (int, float)):
+        return {}
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def panel_defaults():
     """subURI / remarkModel from 3x-ui settings, cached for 60s."""
     if time.time() - _DEFAULTS["t"] > 60:
@@ -144,8 +156,8 @@ def gen_links(inbound, client, default_host):
     proto = inbound.get("protocol")
     listen = inbound.get("listen") or ""
     addr = default_host if listen in ("", "0.0.0.0", "::", "::0") else listen
-    stream = json.loads(inbound.get("streamSettings") or "{}")
-    settings = json.loads(inbound.get("settings") or "{}")
+    stream = _as_dict(inbound.get("streamSettings"))
+    settings = _as_dict(inbound.get("settings"))
     email = client.get("email", "")
     net, params = _net_params(stream)
     flow = client.get("flow", "")
@@ -189,7 +201,12 @@ def gen_links(inbound, client, default_host):
             if force == "none":
                 for k in ("alpn", "sni", "fp"):
                     q.pop(k, None)
-        query = urllib.parse.urlencode(sorted(q.items()))
+        clean = []
+        for key, value in q.items():
+            if value is None or isinstance(value, (dict, list)):
+                continue
+            clean.append((key, value))
+        query = urllib.parse.urlencode(sorted(clean))
         frag = urllib.parse.quote(name, safe="")
         hp = f"{_fmt_host(dest)}:{port}"
         if proto == "vless":
@@ -296,7 +313,7 @@ def client_id_of(protocol, c):
 
 
 def find_client(inbound, email):
-    settings = json.loads(inbound.get("settings") or "{}")
+    settings = _as_dict(inbound.get("settings"))
     for c in settings.get("clients", []):
         if c.get("email", "").lower() == email.lower():
             return settings, c
@@ -305,7 +322,7 @@ def find_client(inbound, email):
 
 def safe_inbound_view(ib, onlines):
     """Strip anything sensitive (keys, private stream settings) before sending."""
-    settings = json.loads(ib.get("settings") or "{}")
+    settings = _as_dict(ib.get("settings"))
     stats = {s["email"].lower(): s for s in (ib.get("clientStats") or [])}
     now = time.time() * 1000
     clients = []
@@ -363,7 +380,7 @@ def check_email(email):
 
 def new_client(inbound, email):
     proto = inbound.get("protocol")
-    settings = json.loads(inbound.get("settings") or "{}")
+    settings = _as_dict(inbound.get("settings"))
     existing = settings.get("clients", [])
     tmpl = existing[0] if existing else {}
     c = {
@@ -411,7 +428,7 @@ def api_dispatch(username, action, data, host):
         email = check_email((data.get("email") or "").strip())
         ib = XUI_API.inbound(iid)
         mx = CFG["_users"][username]["max_clients"]
-        if mx and len(json.loads(ib.get("settings") or "{}").get("clients", [])) >= mx:
+        if mx and len(_as_dict(ib.get("settings")).get("clients", [])) >= mx:
             raise ValueError(f"Client limit reached ({mx})")
         c = parse_common(data, new_client(ib, email))
         XUI_API.call("POST", "/addClient",

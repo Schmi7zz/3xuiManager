@@ -222,6 +222,10 @@ class PanelClient:
             try:
                 return self._api(method, path, form)
             except PanelError as exc:
+                text = str(exc).lower()
+                missing = "unexpected answer" in text or "404" in text or "not found" in text
+                if not missing:
+                    raise
                 last = exc
         if last:
             raise last

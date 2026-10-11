@@ -14,6 +14,15 @@
         <p>Users sign in on this same panel and only see the inbounds you give them.</p>
       </div>
     </div>
+    <div class="card portbox">
+      <h2>User panel port</h2>
+      <p class="hint">This is the separate address for users you create. It is not the 3x-ui port.</p>
+      <div class="grid">
+        <input id="client-port" type="number" min="1" max="65535" placeholder="8788">
+      </div>
+      <p id="client-url" class="hint"></p>
+      <button type="button" class="btn" id="client-port-save">Save port</button>
+    </div>
     <div id="warn" class="warn" hidden>
       <p id="warn-text"></p>
       <div class="grid">

@@ -3,9 +3,17 @@
   if (!script) return;
   var mgmtBase = new URL(script.src, location.href).pathname.replace(/inject\.js$/, "");
   var panelBase = mgmtBase.replace(/__xmgmt\/$/, "");
-  if (/(?:^|; )xmgmt_role=user(?:;|$)/.test(document.cookie) && location.pathname.indexOf("__xmgmt/client") === -1) {
-    location.replace(mgmtBase + "client");
-    return;
+  if (/(?:^|; )xmgmt_role=user(?:;|$)/.test(document.cookie)) {
+    var portMatch = document.cookie.match(/(?:^|; )xmgmt_port=(\d+)/);
+    var here = String(location.port || (location.protocol === "https:" ? "443" : "80"));
+    if (portMatch && here !== portMatch[1]) {
+      location.replace(location.protocol + "//" + location.hostname + ":" + portMatch[1] + "/");
+      return;
+    }
+    if (!portMatch && location.pathname.indexOf("__xmgmt/client") === -1) {
+      location.replace(mgmtBase + "client");
+      return;
+    }
   }
   var role = "";
   var frame = null;

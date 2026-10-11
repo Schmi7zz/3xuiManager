@@ -80,6 +80,7 @@ class Store:
             data["panel_2fa_code"] = data.get("panel_2fa_code") or ""
             data["tls_cert"] = data.get("tls_cert") or ""
             data["tls_key"] = data.get("tls_key") or ""
+            data["client_port"] = int(data.get("client_port") or 0)
             data["users"] = [normalize_user(u) for u in data.get("users") or []]
             generated = False
             if not data.get("secret_key"):

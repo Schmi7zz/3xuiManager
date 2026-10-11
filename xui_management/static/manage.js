@@ -210,11 +210,29 @@
       inbounds = result[0].obj || [];
       inboundWarning = result[0].warning || "";
       showWarning(inboundWarning, result[0].panel_username || "");
+      showClientUrl(result[0].client_port || "");
+      if (result[0].client_port) document.getElementById("client-port").value = result[0].client_port;
       users = result[1].obj || [];
       renderUsers();
       renderEditor(blank());
     });
   }
+
+  function showClientUrl(port) {
+    var el = document.getElementById("client-url");
+    if (!port) {
+      el.textContent = "Not set. Pick a free port, for example 8788. Then open that port in the firewall.";
+      return;
+    }
+    el.textContent = "Users open " + location.protocol + "//" + location.hostname + ":" + port + "/";
+  }
+
+  document.getElementById("client-port-save").onclick = function () {
+    api("client-port", { port: Number(document.getElementById("client-port").value) }).then(function (data) {
+      toast("User panel port saved");
+      showClientUrl(data.obj && data.obj.port);
+    }).catch(function (err) { toast(err.message); });
+  };
 
   document.getElementById("panel-save").onclick = function () {
     api("panel-login", {
